@@ -100,6 +100,49 @@ def generate_answer(
     return completion.choices[0].message.content
 
 
+# --- RAGAS-compatible wrapper class ---
+class RAG:
+    def __init__(
+        self,
+        index_path: str = "hugging_face_documentation",
+        embedding_model_name: str = EMBEDDING_MODEL_NAME,
+        llm_model_name: str = LLM_MODEL_NAME,
+        reranker_model_name: str = RERANKER_MODEL_NAME,
+        retrieval_k: int = 10,
+        rerank: bool = True,
+        rerank_top_n: int = 5,
+    ):
+        self.api_key = os.environ["OPENAI_API_KEY"]
+        self.llm_model_name = llm_model_name
+        self.reranker_model_name = reranker_model_name
+        self.retrieval_k = retrieval_k
+        self.rerank = rerank
+        self.rerank_top_n = rerank_top_n
+
+        self.embedding_model = EPFLEmbeddings(model_name=embedding_model_name)
+        self.vector_db = load_vector_database(index_path, self.embedding_model)
+
+    def get_most_relevant_docs(self, query: str) -> list[str]:
+        documents = retrieve_documents(self.vector_db, query, k=self.retrieval_k)
+        if self.rerank:
+            documents = rerank_documents(
+                query=query,
+                documents=documents,
+                api_key=self.api_key,
+                model=self.reranker_model_name,
+                top_n=self.rerank_top_n,
+            )
+        return documents
+
+    def generate_answer(self, query: str, relevant_docs: list[str]) -> str:
+        return generate_answer(
+            query=query,
+            context_docs=relevant_docs,
+            api_key=self.api_key,
+            model=self.llm_model_name,
+        )
+
+
 # --- Main RAG pipeline ---
 def run_rag(
     query: str,
@@ -111,33 +154,23 @@ def run_rag(
     rerank: bool = True,
     rerank_top_n: int = 5,
 ):
-    api_key = os.environ["OPENAI_API_KEY"]
-
-    embedding_model = EPFLEmbeddings(model_name=embedding_model_name)
-    vector_db = load_vector_database(index_path, embedding_model)
-
-    documents = retrieve_documents(vector_db, query, k=retrieval_k)
-
-    if rerank:
-        documents = rerank_documents(
-            query=query,
-            documents=documents,
-            api_key=api_key,
-            model=reranker_model_name,
-            top_n=rerank_top_n,
-        )
-
-    print("\nContext documents passed to LLM:")
-    for i, doc in enumerate(documents):
-        print(f"  [{i+1}] {doc[:100]}...")
-
-    answer = generate_answer(
-        query=query,
-        context_docs=documents,
-        api_key=api_key,
-        model=llm_model_name,
+    rag = RAG(
+        index_path=index_path,
+        embedding_model_name=embedding_model_name,
+        llm_model_name=llm_model_name,
+        reranker_model_name=reranker_model_name,
+        retrieval_k=retrieval_k,
+        rerank=rerank,
+        rerank_top_n=rerank_top_n,
     )
 
+    relevant_docs = rag.get_most_relevant_docs(query)
+
+    print("\nContext documents passed to LLM:")
+    for i, doc in enumerate(relevant_docs):
+        print(f"  [{i+1}] {doc[:100]}...")
+
+    answer = rag.generate_answer(query, relevant_docs)
     print(f"\nAnswer:\n{answer}")
     return answer
 
