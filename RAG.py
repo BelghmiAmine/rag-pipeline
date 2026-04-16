@@ -22,7 +22,7 @@ If the answer cannot be deduced from the context, do not give an answer."""
 
 # --- Retrieval ---
 def load_vector_database(index_path: str, embedding_model: EPFLEmbeddings) -> FAISS:
-    print(f"Loading vector database from '{index_path}'...")
+    #print(f"Loading vector database from '{index_path}'...")
     return FAISS.load_local(
         index_path,
         embedding_model,
@@ -35,7 +35,7 @@ def retrieve_documents(
     query: str,
     k: int = 10,
 ) -> list[str]:
-    print(f"Retrieving top {k} documents for query: '{query}'")
+    #print(f"Retrieving top {k} documents for query: '{query}'")
     retrieved_docs = vector_db.similarity_search(query=query, k=k)
     return [doc.metadata.get("source", "") + " " + doc.page_content for doc in retrieved_docs]
 
@@ -49,7 +49,7 @@ def rerank_documents(
     model: str = RERANKER_MODEL_NAME,
     top_n: int = 5,
 ) -> list[str]:
-    print(f"Reranking {len(documents)} documents, keeping top {top_n}...")
+    #print(f"Reranking {len(documents)} documents, keeping top {top_n}...")
     url = f"{base_url}/rerank"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -92,10 +92,10 @@ def generate_answer(
 
     completion = client.chat.completions.create(model=model, messages=messages)
 
-    print("-" * 50)
-    print(f"completion_tokens: {completion.usage.completion_tokens}")
-    print(f"prompt_tokens:     {completion.usage.prompt_tokens}")
-    print(f"total_tokens:      {completion.usage.total_tokens}")
+    #print("-" * 50)
+    #print(f"completion_tokens: {completion.usage.completion_tokens}")
+    #print(f"prompt_tokens:     {completion.usage.prompt_tokens}")
+    #print(f"total_tokens:      {completion.usage.total_tokens}")
 
     return completion.choices[0].message.content
 
@@ -166,9 +166,9 @@ def run_rag(
 
     relevant_docs = rag.get_most_relevant_docs(query)
 
-    print("\nContext documents passed to LLM:")
-    for i, doc in enumerate(relevant_docs):
-        print(f"  [{i+1}] {doc[:100]}...")
+    #print("\nContext documents passed to LLM:")
+    #for i, doc in enumerate(relevant_docs):
+    #    print(f"  [{i+1}] {doc[:100]}...")
 
     answer = rag.generate_answer(query, relevant_docs)
     print(f"\nAnswer:\n{answer}")
