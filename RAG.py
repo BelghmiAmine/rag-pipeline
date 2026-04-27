@@ -39,7 +39,7 @@ def retrieve_documents(
     k: int = 10,
 ) -> list[str]:
     print(f"Retrieving top {k} documents for query: '{query}'")
-    # Replace with:
+
     retrieved_docs = vector_db.max_marginal_relevance_search(
         query=query,
         k=k,           
