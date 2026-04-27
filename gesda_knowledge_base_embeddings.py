@@ -92,7 +92,7 @@ def load_gesda_txt(
 
         docs.append(
             LangchainDocument(
-                page_content=text,
+                page_content=f"<source>{pdf_name} | Page {page_num}</source>\n\n{text}",
                 metadata={
                     "source": f"{pdf_name}",
                     "page": page_num,
