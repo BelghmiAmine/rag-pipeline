@@ -11,18 +11,21 @@ load_dotenv()
 EPFL_BASE_URL = "https://inference.rcp.epfl.ch/v1"
 EMBEDDING_MODEL_NAME = "Qwen/Qwen3-Embedding-8B"
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
-LLM_MODEL_NAME = "swiss-ai/Apertus-8B-Instruct-2509"
+LLM_MODEL_NAME = "swiss-ai/Apertus-70B-Instruct-2509"
 
-SYSTEM_PROMPT = """Using the information contained in the context,
-give a comprehensive answer to the question.
-Respond only to the question asked, response should be concise and relevant to the question.
-Provide the number of the source document when relevant.
-If the answer cannot be deduced from the context, do not give an answer."""
+SYSTEM_PROMPT = """You are a precise research assistant for GESDA Science Breakthrough Radar reports.
+
+Answer ONLY using information explicitly present in the provided context documents.
+Do NOT add information from your general knowledge, even if it seems relevant.
+Every claim in your answer must be traceable to a specific context document.
+If the context doesn't contain enough information to answer fully, say so explicitly rather than supplementing with outside knowledge.
+Be concise and structured.
+"""
 
 
 # --- Retrieval ---
 def load_vector_database(index_path: str, embedding_model: EPFLEmbeddings) -> FAISS:
-    #print(f"Loading vector database from '{index_path}'...")
+    print(f"Loading vector database from '{index_path}'...")
     return FAISS.load_local(
         index_path,
         embedding_model,
@@ -35,8 +38,14 @@ def retrieve_documents(
     query: str,
     k: int = 10,
 ) -> list[str]:
-    #print(f"Retrieving top {k} documents for query: '{query}'")
-    retrieved_docs = vector_db.similarity_search(query=query, k=k)
+    print(f"Retrieving top {k} documents for query: '{query}'")
+    # Replace with:
+    retrieved_docs = vector_db.max_marginal_relevance_search(
+        query=query,
+        k=k,           
+        fetch_k=k*3,
+        lambda_mult=0.5
+    )
     return [doc.metadata.get("source", "") + " " + doc.page_content for doc in retrieved_docs]
 
 
@@ -49,7 +58,7 @@ def rerank_documents(
     model: str = RERANKER_MODEL_NAME,
     top_n: int = 5,
 ) -> list[str]:
-    #print(f"Reranking {len(documents)} documents, keeping top {top_n}...")
+    print(f"Reranking {len(documents)} documents, keeping top {top_n}...")
     url = f"{base_url}/rerank"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -92,10 +101,10 @@ def generate_answer(
 
     completion = client.chat.completions.create(model=model, messages=messages)
 
-    #print("-" * 50)
-    #print(f"completion_tokens: {completion.usage.completion_tokens}")
-    #print(f"prompt_tokens:     {completion.usage.prompt_tokens}")
-    #print(f"total_tokens:      {completion.usage.total_tokens}")
+    print("-" * 50)
+    print(f"completion_tokens: {completion.usage.completion_tokens}")
+    print(f"prompt_tokens:     {completion.usage.prompt_tokens}")
+    print(f"total_tokens:      {completion.usage.total_tokens}")
 
     return completion.choices[0].message.content
 
@@ -166,9 +175,9 @@ def run_rag(
 
     relevant_docs = rag.get_most_relevant_docs(query)
 
-    #print("\nContext documents passed to LLM:")
-    #for i, doc in enumerate(relevant_docs):
-    #    print(f"  [{i+1}] {doc[:100]}...")
+    print("\nContext documents passed to LLM:")
+    for i, doc in enumerate(relevant_docs):
+        print(f"  [{i+1}] {doc}...")
 
     answer = rag.generate_answer(query, relevant_docs)
     print(f"\nAnswer:\n{answer}")
