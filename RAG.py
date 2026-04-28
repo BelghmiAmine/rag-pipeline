@@ -1,7 +1,7 @@
 import requests
 from openai import OpenAI
 from langchain_community.vectorstores import FAISS
-from knowledge_base_embeddings import EPFLEmbeddings
+from gesda_knowledge_base_embeddings import EPFLEmbeddings
 import argparse
 import os
 from dotenv import load_dotenv
@@ -114,7 +114,7 @@ def generate_answer(
 class RAG:
     def __init__(
         self,
-        index_path: str = "hugging_face_documentation",
+        index_path: str = "gesda_index",
         embedding_model_name: str = EMBEDDING_MODEL_NAME,
         llm_model_name: str = LLM_MODEL_NAME,
         reranker_model_name: str = RERANKER_MODEL_NAME,
@@ -156,7 +156,7 @@ class RAG:
 # --- Main RAG pipeline ---
 def run_rag(
     query: str,
-    index_path: str = "hugging_face_documentation",
+    index_path: str = "gesda_index",
     embedding_model_name: str = EMBEDDING_MODEL_NAME,
     llm_model_name: str = LLM_MODEL_NAME,
     reranker_model_name: str = RERANKER_MODEL_NAME,
@@ -188,7 +188,7 @@ def run_rag(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a RAG query against a FAISS knowledge base.")
     parser.add_argument("--query", type=str, required=True, help="The question to answer")
-    parser.add_argument("--index", type=str, default="hugging_face_documentation", help="Path to the FAISS index")
+    parser.add_argument("--index", type=str, default="gesda_index", help="Path to the FAISS index")
     parser.add_argument("--llm", type=str, default=LLM_MODEL_NAME, help="LLM model name")
     parser.add_argument("--embedding-model", type=str, default=EMBEDDING_MODEL_NAME, help="Embedding model name")
     parser.add_argument("--reranker", type=str, default=RERANKER_MODEL_NAME, help="Reranker model name")
