@@ -1,2 +1,11 @@
 .env
 .DS_Store
+__pycache__/
+hugging_face_documentation/
+gesda_index/
+inspect_kb.ipynb
+scratch.ipynb
+tutorial.ipynb
+config.txt
+knowledge_base_embeddings.py
+*.pyc
