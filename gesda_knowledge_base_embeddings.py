@@ -32,7 +32,7 @@ MARKDOWN_SEPARATORS = [
 ]
 
 
-# --- Embedding class (unchanged) ---
+# --- Embedding class ---
 class EPFLEmbeddings(Embeddings):
     def __init__(self, model_name: str = EMBEDDING_MODEL_NAME, base_url: str = EPFL_BASE_URL):
         self.model_name = model_name
