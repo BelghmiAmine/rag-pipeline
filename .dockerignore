@@ -1,0 +1,23 @@
+# Cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Data & indexes (too large, should live on Scratch)
+data/
+gesda_index/
+hugging_face_documentation/
+
+# Notebooks (not needed at runtime)
+*.ipynb
+scratch.ipynb
+
+# Secrets
+.env
+
+# Git
+.gitignore
+README.md
+
+# Conda env (not used inside Docker)
+environment.yml
