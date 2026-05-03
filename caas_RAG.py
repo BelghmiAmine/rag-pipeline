@@ -13,9 +13,6 @@ DEFAULT_MODEL_PATH = "/scratch/home/belghmi/models/Qwen3-Embedding-8B"
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 LLM_MODEL_NAME = "swiss-ai/Apertus-70B-Instruct-2509"
 
-# NOTE: When you have a CPT'd model, replace EPFL_BASE_URL with your local
-# vllm server URL (e.g. "http://localhost:8000/v1") and update LLM_MODEL_NAME
-# to point to your checkpoint path. The rest of the code stays identical.
 
 SYSTEM_PROMPT = """You are a precise research assistant for GESDA Science Breakthrough Radar reports.
 

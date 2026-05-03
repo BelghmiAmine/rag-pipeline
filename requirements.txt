@@ -32,3 +32,6 @@ langchain-text-splitters
 openai
 python-dotenv
 httpx
+
+# Testing
+ragas
