@@ -50,7 +50,7 @@ def run_evaluation(
     print("Configuring evaluator LLM...")
     evaluator_llm = LangchainLLMWrapper(
         ChatOpenAI(
-            model="swiss-ai/Apertus-8B-Instruct-2509",
+            model="swiss-ai/Apertus-8B-Instruct-2509", # TODO : pass this as an argument so that we can play with other models instead of hardcoding 
             base_url="https://inference.rcp.epfl.ch/v1",
             api_key=os.environ["OPENAI_API_KEY"],
         )

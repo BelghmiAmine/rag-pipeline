@@ -8,4 +8,6 @@ scratch.ipynb
 tutorial.ipynb
 config.txt
 knowledge_base_embeddings.py
+mkqa.jsonl
+mkqa_pairs.json
 *.pyc

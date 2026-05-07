@@ -3,13 +3,9 @@ wikipedia_knowledge_base_embeddings.py
 
 Builds a FAISS vector index from a Wikipedia language dump (wikimedia/wikipedia).
 
-
-Key features vs caas_knowledge_base_embeddings.py:
+Key features:
   - Streaming mode: articles are never fully loaded into RAM
   - Batched incremental indexing: builds mini FAISS indexes per batch and merges
-  - Single checkpoint: saves progress every CHECKPOINT_EVERY articles,
-    deletes the previous checkpoint to avoid disk bloat
-  - Resume support: detects existing checkpoint and skips already-processed articles
   - Rich metadata: stores title, url, article_id, language, snapshot per chunk
 
 Usage example:
@@ -18,15 +14,11 @@ Usage example:
     --snapshot 20231101 \
     --output /mnt/nlp/scratch/home/belghmi/indexes/wikipedia_20231101_en_snowflake-arctic-embed-m \
     --model /mnt/nlp/scratch/home/belghmi/models/snowflake-arctic-embed-m
-
-To run all 20 languages in parallel, submit one RunAI job per language.
 """
 
 import argparse
 import gc
-import json
 import os
-import shutil
 import time
 from typing import List
 
@@ -46,12 +38,10 @@ from tqdm import tqdm
 
 DEFAULT_MODEL_PATH = "/mnt/nlp/scratch/home/belghmi/models/snowflake-arctic-embed-m"
 DEFAULT_SNAPSHOT = "20231101"
-CHUNK_SIZE = 512          # tokens
+CHUNK_SIZE = 512
 CHUNK_OVERLAP_RATIO = 0.1
-BATCH_SIZE = 50_000       # articles per batch (keeps GPU saturated on A100)
-CHECKPOINT_EVERY = 200_000  # save checkpoint every N articles
+BATCH_SIZE = 50_000
 
-# Wikipedia plain-text separators (no markdown, but keep paragraph breaks)
 WIKIPEDIA_SEPARATORS = [
     "\n\n",
     "\n",
@@ -107,14 +97,13 @@ def split_articles_to_chunks(
     text_splitter: RecursiveCharacterTextSplitter,
     lang: str,
     snapshot: str,
+    seen_texts: set,
 ) -> List[LangchainDocument]:
     """
     Convert a batch of raw Wikipedia article dicts into deduplicated LangchainDocument chunks.
-    Stores rich metadata per chunk: title, url, article_id, language, snapshot.
+    seen_texts persists across batches to deduplicate globally.
     """
     chunks = []
-    seen_texts = set()
-
     for article in articles:
         doc = LangchainDocument(
             page_content=article["text"],
@@ -130,51 +119,7 @@ def split_articles_to_chunks(
             if chunk.page_content not in seen_texts:
                 seen_texts.add(chunk.page_content)
                 chunks.append(chunk)
-
     return chunks
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint helpers
-# ---------------------------------------------------------------------------
-
-CHECKPOINT_META_FILE = "checkpoint_meta.json"
-
-
-def checkpoint_path(output_path: str) -> str:
-    return output_path + "_checkpoint"
-
-
-def save_checkpoint(index: FAISS, output_path: str, articles_processed: int) -> None:
-    ckpt = checkpoint_path(output_path)
-    os.makedirs(ckpt, exist_ok=True)
-    index.save_local(ckpt)
-    with open(os.path.join(ckpt, CHECKPOINT_META_FILE), "w") as f:
-        json.dump({"articles_processed": articles_processed}, f)
-    print(f"  → Checkpoint saved at {ckpt} ({articles_processed:,} articles processed)")
-
-
-def load_checkpoint(output_path: str, embedding_model: LocalEmbeddings):
-    """
-    Returns (index, articles_processed) if a checkpoint exists, else (None, 0).
-    """
-    ckpt = checkpoint_path(output_path)
-    meta_file = os.path.join(ckpt, CHECKPOINT_META_FILE)
-    if os.path.exists(meta_file):
-        with open(meta_file) as f:
-            meta = json.load(f)
-        articles_processed = meta["articles_processed"]
-        print(f"Checkpoint found: resuming from article {articles_processed:,}")
-        index = FAISS.load_local(ckpt, embedding_model, allow_dangerous_deserialization=True)
-        return index, articles_processed
-    return None, 0
-
-
-def delete_checkpoint(output_path: str) -> None:
-    ckpt = checkpoint_path(output_path)
-    if os.path.exists(ckpt):
-        shutil.rmtree(ckpt)
-        print(f"  → Old checkpoint deleted: {ckpt}")
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +133,6 @@ def build_wikipedia_index(
     model_path: str,
     chunk_size: int,
     batch_size: int,
-    checkpoint_every: int,
 ) -> None:
     start_time = time.time()
     dataset_config = f"{snapshot}.{lang}"
@@ -200,24 +144,19 @@ def build_wikipedia_index(
     print(f"  Output   : {output_path}")
     print(f"  Model    : {model_path}")
     print(f"  Batch    : {batch_size:,} articles")
-    print(f"  Checkpoint every : {checkpoint_every:,} articles")
     print("=" * 70)
 
     os.makedirs(output_path, exist_ok=True)
 
-    # --- Load embedding model (once, reused throughout) ---
     embedding_model = LocalEmbeddings(model_path=model_path)
-
-    # --- Check for existing checkpoint ---
-    main_index, articles_processed = load_checkpoint(output_path, embedding_model)
-    if main_index is None:
-        print("No checkpoint found. Starting from scratch.")
-
-    # --- Prepare text splitter ---
     text_splitter = make_text_splitter(model_path, chunk_size)
 
-    # --- Stream dataset ---
-    print(f"\nStreaming dataset: wikimedia/wikipedia / {dataset_config} ...")
+    print(f"\nFetching dataset size for wikimedia/wikipedia / {dataset_config} ...")
+    ds_info = datasets.load_dataset_builder("wikimedia/wikipedia", dataset_config)
+    total_articles = ds_info.info.splits["train"].num_examples
+    print(f"Total articles in dataset: {total_articles:,}")
+
+    print(f"Streaming dataset: wikimedia/wikipedia / {dataset_config} ...")
     ds = datasets.load_dataset(
         "wikimedia/wikipedia",
         dataset_config,
@@ -226,17 +165,13 @@ def build_wikipedia_index(
         trust_remote_code=True,
     )
 
-    # Skip already-processed articles if resuming
-    if articles_processed > 0:
-        print(f"Skipping first {articles_processed:,} articles (already indexed)...")
-        ds = ds.skip(articles_processed)
-
-    # --- Batch processing loop ---
+    main_index = None
+    seen_texts = set()
     batch = []
     total_chunks = 0
-    last_checkpoint_count = articles_processed  # track when to save next checkpoint
+    articles_processed = 0
 
-    pbar = tqdm(desc=f"[{lang}] Articles processed", unit="articles", initial=articles_processed)
+    pbar = tqdm(desc=f"[{lang}] Articles processed", unit="articles", total=total_articles)
 
     for article in ds:
         batch.append(article)
@@ -244,18 +179,15 @@ def build_wikipedia_index(
         if len(batch) < batch_size:
             continue
 
-        # --- Process full batch ---
-        chunks = split_articles_to_chunks(batch, text_splitter, lang, snapshot)
+        chunks = split_articles_to_chunks(batch, text_splitter, lang, snapshot, seen_texts)
         total_chunks += len(chunks)
 
         if chunks:
-            # Build mini FAISS index from this batch
             mini_index = FAISS.from_documents(
                 chunks,
                 embedding_model,
                 distance_strategy=DistanceStrategy.COSINE,
             )
-            # Merge into main index
             if main_index is None:
                 main_index = mini_index
             else:
@@ -267,16 +199,9 @@ def build_wikipedia_index(
         pbar.update(len(batch))
         batch = []
 
-        # --- Checkpoint logic: save every checkpoint_every articles ---
-        if articles_processed - last_checkpoint_count >= checkpoint_every:
-            print(f"\n[Checkpoint] {articles_processed:,} articles | {total_chunks:,} chunks total")
-            delete_checkpoint(output_path)   # delete previous checkpoint first
-            save_checkpoint(main_index, output_path, articles_processed)
-            last_checkpoint_count = articles_processed
-
-    # --- Process remaining articles in last partial batch ---
+    # Process remaining articles in last partial batch
     if batch:
-        chunks = split_articles_to_chunks(batch, text_splitter, lang, snapshot)
+        chunks = split_articles_to_chunks(batch, text_splitter, lang, snapshot, seen_texts)
         total_chunks += len(chunks)
         if chunks:
             mini_index = FAISS.from_documents(
@@ -293,12 +218,8 @@ def build_wikipedia_index(
 
     pbar.close()
 
-    # --- Save final index ---
     print(f"\nSaving final index to '{output_path}' ...")
     main_index.save_local(output_path)
-
-    # --- Clean up checkpoint now that final index is saved ---
-    delete_checkpoint(output_path)
 
     elapsed = time.time() - start_time
     print("=" * 70)
@@ -357,16 +278,9 @@ if __name__ == "__main__":
         default=BATCH_SIZE,
         help=f"Number of articles per processing batch (default: {BATCH_SIZE})",
     )
-    parser.add_argument(
-        "--checkpoint-every",
-        type=int,
-        default=CHECKPOINT_EVERY,
-        help=f"Save checkpoint every N articles (default: {CHECKPOINT_EVERY})",
-    )
 
     args = parser.parse_args()
 
-    # Auto-generate output path if not provided
     if args.output is None:
         model_name = os.path.basename(args.model.rstrip("/"))
         args.output = (
@@ -381,5 +295,4 @@ if __name__ == "__main__":
         model_path=args.model,
         chunk_size=args.chunk_size,
         batch_size=args.batch_size,
-        checkpoint_every=args.checkpoint_every,
     )
