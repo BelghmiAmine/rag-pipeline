@@ -12,7 +12,7 @@ from ragas.metrics import LLMContextRecall, LLMContextPrecisionWithReference, Fa
 from dotenv import load_dotenv
 load_dotenv()
 
-from caas_RAG import EPFL_BASE_URL, LLM_MODEL_NAME, SYSTEM_PROMPT
+from wikipedia_RAG import EPFL_BASE_URL, LLM_MODEL_NAME, SYSTEM_PROMPT
 
 DEFAULT_LLM = LLM_MODEL_NAME
 DEFAULT_EVALUATOR_LLM = "swiss-ai/Apertus-70B-Instruct-2509"
