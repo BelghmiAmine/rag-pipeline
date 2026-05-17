@@ -2,7 +2,7 @@
 transformers
 sentence-transformers
 tokenizers
-faiss-cpu
+faiss-gpu-cu12
 # HuggingFace datasets and all its required dependencies
 datasets
 huggingface_hub
@@ -35,3 +35,6 @@ httpx
 
 # Testing
 ragas
+
+# Demo
+gradio

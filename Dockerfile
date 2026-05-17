@@ -44,7 +44,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
     --extra-index-url https://download.pytorch.org/whl/cu124
 
 # --- Verify imports work at build time ---
-RUN python3 -c "import datasets; import pandas; import torch; import numpy; import sentence_transformers; print('All imports OK')"
+RUN python3 -c "import datasets; import pandas; import torch; import numpy; import sentence_transformers; import openai; import langchain_openai; import ragas; print('All imports OK')"
 
 # --- Copy code last ---
 # This is the only layer that changes when you edit your .py files.

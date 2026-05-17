@@ -1,21 +1,18 @@
 import argparse
 import re
+import os
 from tqdm import tqdm
 from typing import List
 from langchain_core.documents import Document as LangchainDocument
 from transformers import AutoTokenizer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from openai import OpenAI
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain.embeddings.base import Embeddings
-import os
-from dotenv import load_dotenv
-load_dotenv()
+from sentence_transformers import SentenceTransformer
 
 # --- Constants ---
-EMBEDDING_MODEL_NAME = "Qwen/Qwen3-Embedding-8B"
-EPFL_BASE_URL = "https://inference.rcp.epfl.ch/v1"
+DEFAULT_MODEL_PATH = "/mnt/nlp/scratch/home/belghmi/models/bge-m3"
 CHUNK_SIZE = 1024  # tokens
 CHUNK_OVERLAP_RATIO = 0.1
 
@@ -32,26 +29,27 @@ MARKDOWN_SEPARATORS = [
 ]
 
 
-# --- Embedding class ---
-class EPFLEmbeddings(Embeddings):
-    def __init__(self, model_name: str = EMBEDDING_MODEL_NAME, base_url: str = EPFL_BASE_URL):
-        self.model_name = model_name
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=os.environ["OPENAI_API_KEY"],
-        )
+# --- Embedding class (local model, no API calls) ---
+class LocalEmbeddings(Embeddings):
+    def __init__(self, model_path: str = DEFAULT_MODEL_PATH):
+        print(f"Loading embedding model from '{model_path}'...")
+        self.model = SentenceTransformer(model_path)
+        print("Embedding model loaded.")
 
-    def embed_documents(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
-        embeddings = []
-        for i in tqdm(range(0, len(texts), batch_size), desc="Embedding documents"):
-            batch = texts[i : i + batch_size]
-            response = self.client.embeddings.create(model=self.model_name, input=batch)
-            embeddings.extend([item.embedding for item in response.data])
-        return embeddings
+    def embed_documents(self, texts: list[str], batch_size: int = 256) -> list[list[float]]:
+        embeddings = self.model.encode(
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=True,
+            normalize_embeddings=True,
+        )
+        return embeddings.tolist()
 
     def embed_query(self, text: str) -> list[float]:
-        response = self.client.embeddings.create(model=self.model_name, input=text)
-        return response.data[0].embedding
+        return self.model.encode(
+            text,
+            normalize_embeddings=True,
+        ).tolist()
 
 
 # --- GESDA PDF loading ---
@@ -67,7 +65,6 @@ def load_gesda_txt(
     """
     if pdf_name is None:
         pdf_name = os.path.splitext(os.path.basename(txt_path))[0]
-    print(pdf_name)    
 
     with open(txt_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -92,10 +89,11 @@ def load_gesda_txt(
 
         docs.append(
             LangchainDocument(
-                page_content=f"<source>{pdf_name} | Page {page_num}</source>\n\n{text}",
+                page_content=text,
                 metadata={
-                    "source": f"{pdf_name}",
+                    "source": pdf_name,
                     "page": page_num,
+                    "pdf_name": pdf_name,
                 },
             )
         )
@@ -117,11 +115,11 @@ def load_multiple_gesda_txts(txt_paths: List[str]) -> List[LangchainDocument]:
 def split_documents(
     knowledge_base: List[LangchainDocument],
     chunk_size: int = CHUNK_SIZE,
-    tokenizer_name: str = EMBEDDING_MODEL_NAME,
+    tokenizer_path: str = DEFAULT_MODEL_PATH,
 ) -> List[LangchainDocument]:
 
-    print(f"Downloading tokenizer '{tokenizer_name}'...")
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    print(f"Loading tokenizer from '{tokenizer_path}'...")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     print("Tokenizer ready. Splitting documents...")
 
     text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
@@ -159,7 +157,7 @@ def split_documents(
 def build_vector_database(
     txt_paths: List[str],
     output_path: str = "gesda_documentation",
-    embedding_model_name: str = EMBEDDING_MODEL_NAME,
+    model_path: str = DEFAULT_MODEL_PATH,
     chunk_size: int = CHUNK_SIZE,
 ):
     print(f"Loading {len(txt_paths)} GESDA txt file(s)...")
@@ -169,12 +167,12 @@ def build_vector_database(
     docs_processed = split_documents(
         knowledge_base,
         chunk_size=chunk_size,
-        tokenizer_name=embedding_model_name,
+        tokenizer_path=model_path,
     )
     print(f"Total chunks after splitting and deduplication: {len(docs_processed)}")
 
     print("Building vector database...")
-    embedding_model = EPFLEmbeddings(model_name=embedding_model_name)
+    embedding_model = LocalEmbeddings(model_path=model_path)
     knowledge_vector_database = FAISS.from_documents(
         docs_processed,
         embedding_model,
@@ -194,11 +192,11 @@ if __name__ == "__main__":
     type=str,
     nargs="+",
     default=[
-        "data/gesda_radars/gesda_radar_2021.txt",
-        "data/gesda_radars/gesda_radar_2022.txt",
-        "data/gesda_radars/gesda_radar_2023.txt",
-        "data/gesda_radars/gesda_radar_2024.txt",
-        "data/gesda_radars/gesda_radar_2026.txt",
+        "/mnt/nlp/scratch/home/belghmi/data/gesda_radars/gesda_radar_2021.txt",
+        "/mnt/nlp/scratch/home/belghmi/data/gesda_radars/gesda_radar_2022.txt",
+        "/mnt/nlp/scratch/home/belghmi/data/gesda_radars/gesda_radar_2023.txt",
+        "/mnt/nlp/scratch/home/belghmi/data/gesda_radars/gesda_radar_2024.txt",
+        "/mnt/nlp/scratch/home/belghmi/data/gesda_radars/gesda_radar_2026.txt",
     ],
     help="Path(s) to the extracted .txt file(s). Example: --txt gesda_2026.txt gesda_2025.txt",
     )
@@ -206,14 +204,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         type=str,
-        default="gesda_documentation",
+        default="/mnt/nlp/scratch/home/belghmi/indexes/gesda_bge-m3",
         help="Output path for the FAISS index",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default=EMBEDDING_MODEL_NAME,
-        help="Embedding model name",
+        default=DEFAULT_MODEL_PATH,
+        help="Path to local embedding model",
     )
     parser.add_argument(
         "--chunk-size",
@@ -226,6 +224,6 @@ if __name__ == "__main__":
     build_vector_database(
         txt_paths=args.txt,
         output_path=args.output,
-        embedding_model_name=args.model,
+        model_path=args.model,
         chunk_size=args.chunk_size,
     )
