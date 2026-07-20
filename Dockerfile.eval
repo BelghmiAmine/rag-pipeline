@@ -1,0 +1,52 @@
+#####################################
+# Local-inference eval image (vLLM + eval scripts)
+#####################################
+# Used to evaluate OUR OWN checkpoints (base+SFT, CPT+SFT) by self-hosting them with
+# vLLM and running the eval scripts against localhost — no EPFL API for generation.
+#
+# Built FROM the official vLLM image so torch+vLLM+CUDA are already a matched set
+# (avoids fighting the torch pin in the main rag-pipeline image). The eval pods do NOT
+# need faiss/bge-m3/langchain: retrieval is already done and cached to disk, so we only
+# add the OpenAI client + metric deps on top of vLLM.
+#
+# Build:
+#   docker buildx build --platform linux/amd64 -f Dockerfile.eval . --push \
+#     --tag registry.rcp.epfl.ch/nlp/belghmi/rag-eval-vllm:v1.6 \
+#     --build-arg LDAP_GROUPNAME=NLP-StaffU --build-arg LDAP_GID=11131 \
+#     --build-arg LDAP_USERNAME=belghmi --build-arg LDAP_UID=212528
+
+FROM vllm/vllm-openai:v0.23.0-cu129-ubuntu2404
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# curl is needed by serve_and_eval.sh for the /health probe.
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+#####################################
+# RCP CaaS requirement (Storage)
+#####################################
+ARG LDAP_USERNAME
+ARG LDAP_UID
+ARG LDAP_GROUPNAME
+ARG LDAP_GID
+RUN groupadd ${LDAP_GROUPNAME} --gid ${LDAP_GID}
+RUN useradd -m -s /bin/bash -g ${LDAP_GROUPNAME} -u ${LDAP_UID} ${LDAP_USERNAME}
+#####################################
+
+# Eval-only deps on top of vLLM (which already ships openai + tqdm + a sufficiently
+# new transformers). rapidfuzz: alias-aware F1 in metrics.py; dotenv: load_dotenv() calls.
+# datasets: needed by generate_synthetic_qa_v2.py (load wikimedia/wikipedia) and the MMLU evals.
+RUN pip install --no-cache-dir rapidfuzz python-dotenv datasets
+
+# vLLM image sets ENTRYPOINT to the api server; reset it so RunAI's `-- ...` runs as a shell command.
+ENTRYPOINT []
+
+# Copy the eval code last (only layer that changes when you edit .py files).
+RUN mkdir -p /home/${LDAP_USERNAME}
+COPY ./ /home/${LDAP_USERNAME}
+RUN chown -R ${LDAP_USERNAME}:${LDAP_GROUPNAME} /home/${LDAP_USERNAME}
+
+WORKDIR /home/${LDAP_USERNAME}
+USER ${LDAP_USERNAME}

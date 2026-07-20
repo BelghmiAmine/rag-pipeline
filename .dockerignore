@@ -7,6 +7,9 @@ __pycache__/
 data/
 gesda_index/
 hugging_face_documentation/
+mkqa.jsonl
+mkqa_pairs.json
+mkqa_filtered.json
 
 # Notebooks (not needed at runtime)
 *.ipynb

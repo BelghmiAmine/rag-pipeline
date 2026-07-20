@@ -1,13 +1,25 @@
+# Secrets
 .env
+.env.*
+
+# OS / editor cruft
 .DS_Store
+
+# Python
 __pycache__/
-hugging_face_documentation/
-gesda_index/
-inspect_kb.ipynb
-scratch.ipynb
-tutorial.ipynb
-config.txt
-knowledge_base_embeddings.py
-mkqa.jsonl
-mkqa_pairs.json
 *.pyc
+*.pyo
+
+# Notebooks / scratch
+*.ipynb
+
+# Local data, indexes, and results (live on Scratch, not in git)
+data/
+*.faiss
+*.pkl
+gesda_index/
+*_index/
+mkqa*.json
+mkqa*.jsonl
+results/
+*_results/

@@ -1,85 +1,71 @@
-# RAG Pipeline
+# Multilingual Wikipedia CPT-for-RAG — Evaluation Pipeline
 
-A Retrieval-Augmented Generation (RAG) pipeline that runs entirely on the EPFL RCP AI-as-a-Service platform — no local GPU required.
+Retrieval and evaluation code for the MSc thesis
+**_"Does Continual Pretraining Improve Retrieval-Augmented Generation on the Same Knowledge Distribution?"_** (EPFL NLP, 2026).
 
-## What it does
+It builds per-language Wikipedia FAISS indexes, generates a synthetic Wikipedia-grounded
+QA benchmark, and evaluates a **matched pair** of Apertus-8B models
+(`base → SFT` vs `base → CPT → SFT`) in closed-book and retrieval-augmented settings,
+scored by an independent LLM judge.
 
-Given a question, the pipeline:
-1. Searches a local FAISS vector database for the most relevant document chunks
-2. Reranks the retrieved chunks using a cross-encoder reranker
-3. Passes the best chunks as context to an LLM to generate a grounded answer
+> **Sibling repositories**
+> - Continual-pretraining (CPT) training code: **[apertus-cpt](https://github.com/BelghmiAmine/apertus-cpt)**
+> - GESDA Radar Explorer (secondary contribution): **[gesda-app](https://github.com/BelghmiAmine/gesda-app)**
 
-## Files
+## Pipeline overview
 
-**`RAG.py`** — Runs the RAG pipeline for a single query. It loads the saved FAISS index, retrieves the top-k most similar chunks, optionally reranks them, and sends the context + question to an LLM to generate an answer.
+```
+build indexes ──▶ generate synthetic QA ──▶ retrieve ──▶ evaluate ──▶ analyze
+```
 
-**`gesda_knowledge_base_embeddings.py`** — Builds the GESDA knowledge base. It loads the .txt versions of the gesda radars pdfs, splits them into chunks using a token-aware text splitter, embeds each chunk using the EPFL embedding API, and saves the resulting FAISS index locally.
+1. **Build indexes** — `wikipedia_knowledge_base_embeddings.py`
+   Chunks the `wikimedia/wikipedia` 20231101 snapshot per language, embeds with BGE-M3,
+   and writes one FAISS index per language (resumable; persists every 200k articles).
+2. **Generate the synthetic benchmark**
+   - `generate_synthetic_qa.py` — v1: one factoid QA per sampled article, critic-filtered, top-500/language.
+   - `generate_synthetic_qa_v2.py` — v2: harder (multi-hop / reasoning) questions, richer source articles.
+3. **Retrieve** — `retrieve.py`
+   For each test question, encodes with BGE-M3 and pulls the top-k chunks; writes a
+   retrieval-results JSON consumed by the evaluators.
+4. **Evaluate**
+   - `llm_as_judge_eval.py` — **primary** synthetic eval; generates answers (closed-book or RAG)
+     and scores them 1–5 against the gold reference with an independent judge; also reports Hit@5 / Precision@5.
+   - `include_eval.py` — deterministic MCQ accuracy on the INCLUDE benchmark.
+   - `serve_and_eval.sh` / `serve_and_eval_all.sh` — boot a local vLLM server for a checkpoint
+     and run the eval matrix against it (self-contained RunAI jobs).
+5. **Analyze**
+   - `compare_synthetic.py` — aggregates per-language results into the final table.
+   - `analyze_v1_significance.py` — paired t-test, random-effects meta-analysis (DerSimonian–Laird), and per-question pooled test.
 
-**`knowledge_base_embeddings.py`** — Same as gesda_knowledge_base_embeddings.py but for datasets from huggingface.
+## Supporting modules
 
-**`ragas_eval.ipynb`** — RAG performance evaluation using ragas.
+| File | Role |
+|---|---|
+| `llm_client.py` | OpenAI-client factory: routes generation to the EPFL API (online) or a local vLLM server; the judge always uses the EPFL API. |
+| `wikipedia_RAG.py` | Single-query RAG helper and shared constants (`EPFL_BASE_URL`, system prompt, local embeddings). |
+| `Dockerfile` | Main image (FAISS + PyTorch + sentence-transformers + langchain + OpenAI client) for indexing/retrieval/generation jobs. |
+| `Dockerfile.eval` | Lean image built on `vllm/vllm-openai` for self-hosting checkpoints and running the evaluators. |
+| `requirements.txt` | Python dependencies. |
 
-## How it works
+## Models (served via EPFL RCP AI-as-a-Service)
 
-The pipeline has two steps that must be run in order:
-
-1. **Build the index** — `gesda_knowledge_base_embeddings.py` downloads the dataset, chunks it, embeds each chunk via the EPFL API, and saves a FAISS index to disk. This only needs to run once.
-
-2. **Query the index** — `RAG.py` loads the saved FAISS index and answers questions against it.
-
-The FAISS index is stored locally in the folder specified by `--output` (default: `hugging_face_documentation/`).
-
-## Models (all served via EPFL RCP)
-
-- **Embedding**: `Qwen/Qwen3-Embedding-8B`
-- **Reranker**: `BAAI/bge-reranker-v2-m3`
-- **LLM**: `swiss-ai/Apertus-70B-Instruct-2509`
+- **Retriever / embeddings:** `BAAI/bge-m3`
+- **Independent judge:** `Qwen/Qwen3-235B-A22B-Instruct-2507`
+- **Generators evaluated:** self-hosted Apertus-8B `base-SFT` / `cpt-SFT` (via vLLM), with the
+  released `swiss-ai/Apertus-8B-Instruct-2509` and `-70B-` as scale references.
 
 ## Setup
 
-**1. Clone the repo**
 ```bash
-git clone <your-repo-url>
-cd rag-pipeline
+pip install -r requirements.txt      # or build the Docker image
 ```
 
-**2. Create the conda environment**
-```bash
-conda env create -f environment.yml
-conda activate embedding
-```
-
-**3. Set up your API key** : 
-
-Create a `.env` file in the project root :
+Create a `.env` in the project root (never commit it):
 
 ```bash
-OPENAI_API_KEY=your_epfl_api_key_here
-KMP_DUPLICATE_LIB_OK=TRUE
-```
-## Usage
-
-**Build the knowledge base (only needs to run once)**
-```bash
-python gesda_knowledge_base_embeddings.py
+OPENAI_API_KEY=your_epfl_aiaas_key   # EPFL RCP AI-as-a-Service
 ```
 
-With custom options:
-```bash
-python gesda_knowledge_base_embeddings.py --output gesda_index --chunk-size 512
-```
-
-**Run a query**
-```bash
-python RAG.py --query "How to create a pipeline object?" --index gesda_index
-```
-
-With custom options:
-```bash
-python RAG.py --query "What is quantum computing and when will it be widely available?" --retrieval-k 50 --rerank-top-n 5 --no-rerank
-```
-
-## Notes
-
-- The FAISS index is saved locally and does not need to be rebuilt on every run
-- Reranking is enabled by default
+The heavy stages (index builds, generation, evaluation) are designed to run as containerized
+jobs on the EPFL RCP **RunAI** cluster, reading/writing the lab Scratch volume
+(`/mnt/nlp/scratch`). See the `serve_and_eval*.sh` scripts for the self-hosting + eval pattern.

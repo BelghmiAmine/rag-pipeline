@@ -1,6 +1,8 @@
 # Core ML
-transformers
-sentence-transformers
+# transformers >=4.50 requires torch >=2.7 (uses torch.float8_e8m0fnu)
+# Dockerfile pins torch==2.6.0, so pin transformers below that boundary.
+transformers==4.48.3
+sentence-transformers==3.4.1
 tokenizers
 faiss-gpu-cu12
 # HuggingFace datasets and all its required dependencies
@@ -34,7 +36,7 @@ python-dotenv
 httpx
 
 # Testing
-ragas
+rapidfuzz
 
 # Demo
 gradio

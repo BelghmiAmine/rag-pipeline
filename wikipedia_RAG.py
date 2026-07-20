@@ -1,9 +1,10 @@
 from openai import OpenAI
 from langchain_community.vectorstores import FAISS
-from caas_knowledge_base_embeddings import LocalEmbeddings
 from tqdm import tqdm
 import argparse
 import os
+from langchain.embeddings.base import Embeddings
+from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -13,16 +14,36 @@ DEFAULT_MODEL_PATH = "/scratch/home/belghmi/models/bge-m3"
 LLM_MODEL_NAME = "swiss-ai/Apertus-8B-Instruct-2509"
 
 
-SYSTEM_PROMPT = """You are a precise research assistant for general knowledge questions grounded in Wikipedia.
+SYSTEM_PROMPT = """You are a knowledgeable assistant answering general knowledge questions.
 
-Answer ONLY using information explicitly present in the provided context documents.
-Do NOT add information from your general knowledge, even if it seems relevant.
-Every claim in your answer must be traceable to a specific context document.
-Always cite your sources when giving an answer.
-If the context doesn't contain enough information to answer fully, say so explicitly rather than supplementing with outside knowledge.
-Be concise and structured.
+Use the provided context documents as your primary source. When the context contains the answer, use it.
+You may draw on your general knowledge to complement the context, but prefer context when available.
+Always respond in the same language as the question.
+Give only the answer — one sentence or less. Do not cite document numbers, do not explain your reasoning.
 """
 
+
+# --- Embedding class (local model, no API calls) ---
+class LocalEmbeddings(Embeddings):
+    def __init__(self, model_path: str = DEFAULT_MODEL_PATH):
+        print(f"Loading embedding model from '{model_path}'...")
+        self.model = SentenceTransformer(model_path)
+        print("Embedding model loaded.")
+
+    def embed_documents(self, texts: list[str], batch_size: int = 256) -> list[list[float]]:
+        embeddings = self.model.encode(
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=True,
+            normalize_embeddings=True,
+        )
+        return embeddings.tolist()
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.model.encode(
+            text,
+            normalize_embeddings=True,
+        ).tolist()
 
 # --- Retrieval ---
 def load_vector_database(index_path: str, embedding_model: LocalEmbeddings) -> FAISS:
