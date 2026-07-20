@@ -102,16 +102,14 @@ runai submit build-index-fr --image $IMG --gpu 1 --node-pools default \
 runai submit gen-qa-fr --image $IMG --gpu 0 \
   -e PYTHONUNBUFFERED=1 -e OPENAI_API_KEY=$OPENAI_API_KEY -e HF_TOKEN=$HF_TOKEN \
   --pvc nlp-scratch:/mnt/nlp/scratch \
-  -- python3 -u generate_synthetic.py --languages fr --n-articles 10000 --target-qa 500 \
-       --output-dir $S/synthetic_qa
+  -- python3 -u generate_synthetic.py --args
 ```
 
 **3. Retrieve top-k context** (GPU — embeds queries, searches FAISS):
 ```bash
 runai submit retrieve-fr --image $IMG --gpu 1 --node-pools default \
   -e PYTHONUNBUFFERED=1 --pvc nlp-scratch:/mnt/nlp/scratch \
-  -- python3 -u retrieve.py --dataset-type synthetic --dataset $S/synthetic_qa/fr.json \
-       --language fr --index $S/indexes/fr --retrieval-k 5 --output $S/retrieval/fr.json
+  -- python3 -u retrieve.py --args
 ```
 
 **4. Evaluate a checkpoint** — self-host it with vLLM, then run the judge in the same job
@@ -123,9 +121,7 @@ runai submit eval-cptsft-fr-rag --image $EVAL_IMG --gpu 1 --node-pools default \
      vllm serve '"$S"'/sft_runs/cpt_sft --served-model-name local-model \
        --host 0.0.0.0 --port 8000 --dtype bfloat16 --max-model-len 4096 > /tmp/vllm.log 2>&1 &
      until curl -sf localhost:8000/health; do sleep 5; done
-     python3 -u llm_as_judge_eval.py --inference local --llm local-model \
-       --judge Qwen/Qwen3-235B-A22B-Instruct-2507 \
-       --retrieval-results '"$S"'/retrieval/fr.json --output '"$S"'/results/cptsft-fr-rag.json'
+     python3 -u llm_as_judge_eval.py -- args
 ```
 
 To evaluate a **released** model instead of a local checkpoint, skip vLLM and use the API directly:
