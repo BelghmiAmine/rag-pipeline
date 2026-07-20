@@ -15,27 +15,24 @@ scored by an independent LLM judge.
 ## Pipeline overview
 
 ```
-build indexes ──▶ generate synthetic QA ──▶ retrieve ──▶ evaluate ──▶ analyze
+build indexes ──▶ generate synthetic QA ──▶ retrieve ──▶ evaluate
 ```
 
 1. **Build indexes** — `wikipedia_knowledge_base_embeddings.py`
    Chunks the `wikimedia/wikipedia` 20231101 snapshot per language, embeds with BGE-M3,
    and writes one FAISS index per language (resumable; persists every 200k articles).
-2. **Generate the synthetic benchmark**
-   - `generate_synthetic_qa.py` — v1: one factoid QA per sampled article, critic-filtered, top-500/language.
-   - `generate_synthetic_qa_v2.py` — v2: harder (multi-hop / reasoning) questions, richer source articles.
+2. **Generate the synthetic benchmark** — `generate_synthetic.py`
+   Samples articles per language, generates one factoid QA per article with a generator LLM,
+   filters them with an independent critic (groundedness / relevance / standaloneness),
+   and keeps the top-500 per language.
 3. **Retrieve** — `retrieve.py`
    For each test question, encodes with BGE-M3 and pulls the top-k chunks; writes a
    retrieval-results JSON consumed by the evaluators.
-4. **Evaluate**
+4. **Evaluate** — self-host a checkpoint with vLLM (built from `Dockerfile.eval`) and run an
+   evaluator against it with `--inference local`:
    - `llm_as_judge_eval.py` — **primary** synthetic eval; generates answers (closed-book or RAG)
      and scores them 1–5 against the gold reference with an independent judge; also reports Hit@5 / Precision@5.
    - `include_eval.py` — deterministic MCQ accuracy on the INCLUDE benchmark.
-   - `serve_and_eval.sh` / `serve_and_eval_all.sh` — boot a local vLLM server for a checkpoint
-     and run the eval matrix against it (self-contained RunAI jobs).
-5. **Analyze**
-   - `compare_synthetic.py` — aggregates per-language results into the final table.
-   - `analyze_v1_significance.py` — paired t-test, random-effects meta-analysis (DerSimonian–Laird), and per-question pooled test.
 
 ## Supporting modules
 
