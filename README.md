@@ -51,18 +51,85 @@ build indexes ──▶ generate synthetic QA ──▶ retrieve ──▶ evalu
 - **Generators evaluated:** self-hosted Apertus-8B `base-SFT` / `cpt-SFT` (via vLLM), with the
   released `swiss-ai/Apertus-8B-Instruct-2509` and `-70B-` as scale references.
 
-## Setup
+## Prerequisites
+
+Every heavy stage runs as a containerized job on the **EPFL RCP RunAI** cluster. You need:
+
+- **RunAI access** to a project on the RCP cluster (`runai login`, then `runai config project <your-project>`).
+- **Harbor registry** access to push images (`registry.rcp.epfl.ch/<lab>/<user>/...`).
+- A **Scratch PVC** (`nlp-scratch` → `/mnt/nlp/scratch`) for indexes, datasets, and results.
+- An **EPFL AI-as-a-Service** API key (`OPENAI_API_KEY`) for generation/judging, and an `HF_TOKEN`
+  for dataset/model downloads. Pass them as env vars (`-e OPENAI_API_KEY=$OPENAI_API_KEY`) — never commit them.
+
+Local, GPU-free experimentation is possible (`pip install -r requirements.txt`), but retrieval,
+index builds, and self-hosted evaluation need GPUs and the cluster.
+
+## Build and push the images
+
+Two images: the main one (indexing / retrieval / generation) and a lean vLLM image for
+self-hosting checkpoints during evaluation. Replace the LDAP build-args with your own RCP values.
 
 ```bash
-pip install -r requirements.txt      # or build the Docker image
+# Main image
+docker build --platform linux/amd64 . \
+  --tag registry.rcp.epfl.ch/nlp/<user>/rag-pipeline:v1 \
+  --build-arg LDAP_GROUPNAME=<group> --build-arg LDAP_GID=<gid> \
+  --build-arg LDAP_USERNAME=<user> --build-arg LDAP_UID=<uid>
+docker push registry.rcp.epfl.ch/nlp/<user>/rag-pipeline:v1
+
+# Evaluation image (vLLM + evaluators)
+docker build --platform linux/amd64 -f Dockerfile.eval . \
+  --tag registry.rcp.epfl.ch/nlp/<user>/rag-eval-vllm:v1 \
+  --build-arg LDAP_GROUPNAME=<group> --build-arg LDAP_GID=<gid> \
+  --build-arg LDAP_USERNAME=<user> --build-arg LDAP_UID=<uid>
+docker push registry.rcp.epfl.ch/nlp/<user>/rag-eval-vllm:v1
 ```
 
-Create a `.env` in the project root (never commit it):
+## Run the pipeline (RunAI job examples)
 
+Below, `IMG=registry.rcp.epfl.ch/nlp/<user>/rag-pipeline:v1`, `EVAL_IMG=…/rag-eval-vllm:v1`,
+and `S=/mnt/nlp/scratch/<user>`. Shown for French (`fr`); loop over the 13 languages.
+
+**1. Build a per-language Wikipedia index** (GPU — embeds with BGE-M3):
 ```bash
-OPENAI_API_KEY=your_epfl_aiaas_key   # EPFL RCP AI-as-a-Service
+runai submit build-index-fr --image $IMG --gpu 1 --node-pools default \
+  -e PYTHONUNBUFFERED=1 -e HF_TOKEN=$HF_TOKEN --pvc nlp-scratch:/mnt/nlp/scratch \
+  -- python3 -u wikipedia_knowledge_base_embeddings.py --lang fr --output $S/indexes/fr
 ```
 
-The heavy stages (index builds, generation, evaluation) are designed to run as containerized
-jobs on the EPFL RCP **RunAI** cluster, reading/writing the lab Scratch volume
-(`/mnt/nlp/scratch`). See the `serve_and_eval*.sh` scripts for the self-hosting + eval pattern.
+**2. Generate the synthetic benchmark** (CPU — calls the AIaaS API):
+```bash
+runai submit gen-qa-fr --image $IMG --gpu 0 \
+  -e PYTHONUNBUFFERED=1 -e OPENAI_API_KEY=$OPENAI_API_KEY -e HF_TOKEN=$HF_TOKEN \
+  --pvc nlp-scratch:/mnt/nlp/scratch \
+  -- python3 -u generate_synthetic.py --languages fr --n-articles 10000 --target-qa 500 \
+       --output-dir $S/synthetic_qa
+```
+
+**3. Retrieve top-k context** (GPU — embeds queries, searches FAISS):
+```bash
+runai submit retrieve-fr --image $IMG --gpu 1 --node-pools default \
+  -e PYTHONUNBUFFERED=1 --pvc nlp-scratch:/mnt/nlp/scratch \
+  -- python3 -u retrieve.py --dataset-type synthetic --dataset $S/synthetic_qa/fr.json \
+       --language fr --index $S/indexes/fr --retrieval-k 5 --output $S/retrieval/fr.json
+```
+
+**4. Evaluate a checkpoint** — self-host it with vLLM, then run the judge in the same job
+(add `--closed-book` for the CB condition):
+```bash
+runai submit eval-cptsft-fr-rag --image $EVAL_IMG --gpu 1 --node-pools default \
+  -e PYTHONUNBUFFERED=1 -e OPENAI_API_KEY=$OPENAI_API_KEY --pvc nlp-scratch:/mnt/nlp/scratch \
+  -- bash -lc '
+     vllm serve '"$S"'/sft_runs/cpt_sft --served-model-name local-model \
+       --host 0.0.0.0 --port 8000 --dtype bfloat16 --max-model-len 4096 > /tmp/vllm.log 2>&1 &
+     until curl -sf localhost:8000/health; do sleep 5; done
+     python3 -u llm_as_judge_eval.py --inference local --llm local-model \
+       --judge Qwen/Qwen3-235B-A22B-Instruct-2507 \
+       --retrieval-results '"$S"'/retrieval/fr.json --output '"$S"'/results/cptsft-fr-rag.json'
+```
+
+To evaluate a **released** model instead of a local checkpoint, skip vLLM and use the API directly:
+`--inference online --llm swiss-ai/Apertus-8B-Instruct-2509`. For INCLUDE, swap
+`llm_as_judge_eval.py` for `include_eval.py` (deterministic MCQ, no judge).
+
+Monitor any job with `runai logs <job>` and list with `runai list`.
