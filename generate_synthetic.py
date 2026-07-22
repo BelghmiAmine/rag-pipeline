@@ -33,7 +33,7 @@ from wikipedia_RAG import EPFL_BASE_URL
 # --- Config ---
 SEED = 42
 MAX_WORKERS = 16
-DEFAULT_GENERATOR_MODEL = "swiss-ai/Apertus-70B-Instruct-2509"
+DEFAULT_GENERATOR_MODEL = "deepseek-ai/DeepSeek-V3.2"
 # Independent multilingual critic, different from the generator and from the models
 # being evaluated downstream (Apertus 8B/70B), to avoid self-evaluation bias.
 DEFAULT_CRITIC_MODEL = "Qwen/Qwen3-235B-A22B-Instruct-2507"
